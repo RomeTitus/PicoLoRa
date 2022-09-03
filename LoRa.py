@@ -1,13 +1,16 @@
 import time
 import math
+import utime
 from ucollections import namedtuple
 from urandom import getrandbits
 from machine import SPI
 from machine import Pin
 
-
 #Constants
 FLAGS_ACK = 0x80
+FLAGS_Rept_send = 0x81
+FLAGS_Rept_reply = 0x82
+
 BROADCAST_ADDRESS = 255
 
 REG_00_FIFO = 0x00
@@ -104,17 +107,18 @@ class LoRa(object):
         self._last_header_id = 0
 
         self._last_payload = None
+        self._last_relay_payload = None
         self.crypto = crypto
 
         self.cad_timeout = 0
         self.send_retries = 2
         self.wait_packet_sent_timeout = 0.2
-        self.retry_timeout = 0.2
+        self.retry_timeout = 0.3
 
         self.pico_logger = pico_logger
-        
-        # Setup the module
-#        gpio_interrupt = Pin(self._interrupt, Pin.IN, Pin.PULL_DOWN)
+        self.relay_payload = None
+        #Setup the module
+        #gpio_interrupt = Pin(self._interrupt, Pin.IN, Pin.PULL_DOWN)
         gpio_interrupt = Pin(self._interrupt, Pin.IN)
         gpio_interrupt.irq(trigger=Pin.IRQ_RISING, handler=self._handle_interrupt)
         
@@ -242,13 +246,17 @@ class LoRa(object):
             self._spi_write(REG_01_OP_MODE, MODE_STDBY)
             self._mode = MODE_STDBY
 
-    def send(self, data, header_to, header_id=0, header_flags=0):
-        self.pico_logger.WriteNewLog("Sending Message: " + str(data) +"\theader_to: " + str(header_to) + "\theader_id: " + str(header_id) + "\theader_flags: " + str(header_flags))
+    def send(self, data, header_to, header_id=0, header_flags=0, relay_Addresses = None):
+        utime.sleep(0.3)
+        print("Sending Message: " + str(data) +"\theader_to: " + str(header_to) + "\theader_id: " + str(header_id) + "\theader_flags: " + str(header_flags) + "\trelay_Addresses: " + str(relay_Addresses))
+        
+        #Just so we dont send messages while its transmitting
         self.wait_packet_sent()
         self.set_mode_idle()
         self.wait_cad()
 
         header = [header_to, self._this_address, header_id, header_flags]
+        self.relay_list_to_number(relay_Addresses, header)
         if type(data) == int:
             data = [data]
         elif type(data) == bytes:
@@ -258,17 +266,19 @@ class LoRa(object):
 
         if self.crypto:
             data = [b for b in self._encrypt(bytes(data))]
-
+        
         payload = header + data
         self._spi_write(REG_0D_FIFO_ADDR_PTR, 0)
         self._spi_write(REG_00_FIFO, payload)
         self._spi_write(REG_22_PAYLOAD_LENGTH, len(payload))
-
+        
         self.set_mode_tx()
         return True
 
     def send_to_wait(self, data, header_to, header_flags=0, retries=3):
         self._last_header_id += 1
+        if(self._last_header_id == 256):
+            self._last_header_id = 1
 
         for _ in range(retries + 1):
             self.send(data, header_to, header_id=self._last_header_id, header_flags=header_flags)
@@ -281,12 +291,57 @@ class LoRa(object):
             while time.time() - start < self.retry_timeout + (self.retry_timeout * (getrandbits(16) / (2**16 - 1))):
                 if self._last_payload:
                     if self._last_payload.header_to == self._this_address and \
-                            self._last_payload.header_flags & FLAGS_ACK and \
+                            self._last_payload.header_flags == FLAGS_ACK and \
                             self._last_payload.header_id == self._last_header_id:
                         self.pico_logger.WriteNewLog("ACK: " + str(self._last_payload))
+                        print("We Got ACK")
                         # We got an ACK
                         return True
         self.pico_logger.WriteNewLog("ACK: Failed")
+        print("ACK: Failed")
+        return False
+
+    def send_to_wait_relay(self, data, header_to, relay_Addresses, header_flags=FLAGS_Rept_send, retries=3, header_id = 0):
+        if(header_id != 0):
+            self._last_header_id = header_id
+        else:
+            self._last_header_id += 1
+        
+        if(self._last_header_id == 256):
+            self._last_header_id = 1
+
+        #print("Prparing data to send: " + str(data))
+        for _ in range(retries + 1):
+            
+            self.send(data, header_to, header_id=self._last_header_id, header_flags=header_flags, relay_Addresses=relay_Addresses)
+
+            self.set_mode_rx()
+            self.wait_packet_sent()
+            #utime.sleep(1)
+            start = time.time()
+            #Check to see if the message was recieved and send forward
+            
+            while time.time() - start < self.retry_timeout + (self.retry_timeout * (getrandbits(16) / (2**16 - 1))):
+                #print("_last_relay_payload: " + str(self._last_relay_payload))
+                if self._last_relay_payload or self._last_payload:
+
+                    if (self._last_relay_payload and self._last_relay_payload.header_from_previous == self._this_address and \
+                            self._last_relay_payload.header_from == header_to and \
+                            self._last_relay_payload.header_flags == FLAGS_Rept_send and \
+                            self._last_relay_payload.header_id == self._last_header_id) or\
+                            (self._last_payload and self._last_payload.header_to == self._this_address and \
+                            self._last_payload.header_flags == FLAGS_Rept_reply and \
+                            self._last_payload.header_id == self._last_header_id):
+
+                        #TODO _last_header_id might be changed, we we try fix this? 
+                        self.pico_logger.WriteNewLog("ACK: " + str(self._last_relay_payload))
+                        
+                        print("We Got ACK")
+                        # We got an ACK
+                        self._last_relay_payload = None
+                        return True
+        self.pico_logger.WriteNewLog("ACK: Failed")
+        print("ACK: Failed")
         return False
 
     def send_ack(self, header_to, header_id):
@@ -327,8 +382,9 @@ class LoRa(object):
 
     def _handle_interrupt(self, channel):
         irq_flags = self._spi_read(REG_12_IRQ_FLAGS)
-
+        relay_payload = None
         if self._mode == MODE_RXCONTINUOUS and (irq_flags & RX_DONE):
+            
             packet_len = self._spi_read(REG_13_RX_NB_BYTES)
             self._spi_write(REG_0D_FIFO_ADDR_PTR, self._spi_read(REG_10_FIFO_RX_CURRENT_ADDR))
 
@@ -348,30 +404,49 @@ class LoRa(object):
             else:
                 rssi = round(rssi - 164, 2)
 
-            if packet_len >= 4:
+            if packet_len >= 5:
                 header_to = packet[0]
                 header_from = packet[1]
                 header_id = packet[2]
                 header_flags = packet[3]
-                message = bytes(packet[4:]) if packet_len > 4 else b''
+                relay_Addresses_len = packet[4]
+                
+                relay_Addresses = []
+                for charicter in packet[5: 5 + relay_Addresses_len]:
+                    relay_Addresses.append(int(charicter))
 
-                if (self._this_address != header_to) and ((header_to != BROADCAST_ADDRESS) or (self._receive_all is False)):
+                message = bytes(packet[5 + relay_Addresses_len:]) if packet_len > 5 else b''
+                
+                print("header_from: " + str(header_from) + "\theader_to: " + str(header_to) +  "\tmessage: " + str(message))
+
+                if(self.relay_check_ack(header_to, header_from, header_id, header_flags, relay_Addresses_len, relay_Addresses, message, rssi, snr)):
+                    #print("Relay Ack!")
                     return
-
+                #print("header_from: " + str(header_from) + "\theader_to: " + str(header_to) +  "\tmessage: " + str(message))
                 if self.crypto and len(message) % 16 == 0:
                     message = self._decrypt(message)
 
-                if self._acks and header_to == self._this_address and not header_flags & FLAGS_ACK:
+                if self._acks and header_to == self._this_address and not header_flags and FLAGS_ACK and relay_Addresses_len == 0:
+                    #print("send_ack")
                     self.send_ack(header_from, header_id)
 
+               #print(str(relay_Addresses_len > 0) + "\t" + str(header_to == self._this_address) + "\t" +str(not header_flags))
+
+                if(relay_Addresses_len > 0 and header_to == self._this_address and (header_flags ==  FLAGS_Rept_send) and FLAGS_ACK):
+                    self.relay_payload = namedtuple(
+                            "Payload",
+                            ['message', 'header_to', 'header_from', 'header_from_previous', 'header_id', 'header_flags', 'relay_Addresses', 'rssi', 'snr']
+                        )(message, header_to, header_from, self._this_address, header_id, header_flags, relay_Addresses, rssi, snr)
+                    
+                    #self.relay_check_repeat(payload)
+                    
                 self.set_mode_rx()
-  
 
                 self._last_payload = namedtuple(
                     "Payload",
-                    ['message', 'header_to', 'header_from', 'header_id', 'header_flags', 'rssi', 'snr']
-                )(message, header_to, header_from, header_id, header_flags, rssi, snr)
-
+                    ['message', 'header_to', 'header_from', 'header_id', 'header_flags', 'relay_Addresses', 'rssi', 'snr']
+                )(message, header_to, header_from, header_id, header_flags, relay_Addresses, rssi, snr)
+                
                 if not header_flags & FLAGS_ACK:
                     self.on_recv(self._last_payload)
 
@@ -384,6 +459,82 @@ class LoRa(object):
             self.set_mode_idle()
 
         self._spi_write(REG_12_IRQ_FLAGS, 0xff)
+            
+
+    def relay_list_to_number(self, relay_Addresses, header):
+        if(relay_Addresses is None):
+            header.append(0)
+            return
+        header.append(len(relay_Addresses))
+
+        for address in relay_Addresses:
+            header.append(address)
+                
+    def relay_check_ack(self, header_to, header_from, header_id, header_flags, relay_Addresses_len, relay_Addresses, message, rssi, snr):
+        #TODO make this more robust
+        if(header_to != BROADCAST_ADDRESS or self._receive_all is False):
+
+            if(self._this_address != header_to):
+                if(relay_Addresses_len > 0 and self._this_address in relay_Addresses):
+                    destination_position = relay_Addresses.index(header_from)
+                    if(destination_position != 0 and relay_Addresses.index(self._this_address) + 1 == destination_position):
+                        self._last_relay_payload = namedtuple(
+                                "Payload",
+                                ['message', 'header_to', 'header_from', 'header_from_previous', 'header_id', 'header_flags', 'rssi', 'snr']
+                            )(message, header_to, header_from, self._this_address, header_id, header_flags, rssi, snr)
+                return True
+        return False
+
+    def relay_check_repeat(self):
+
+        if(self.relay_payload is None):
+            return
+        
+        payload = self.relay_payload
+
+        position = payload.relay_Addresses.index(self._this_address)
+        
+        if(position < len(payload.relay_Addresses) -1 ):
+            print("Relaying Message to: " + str(payload.relay_Addresses[position + 1]) + "\t Message: " + str(payload.message) + "\tRelay List: " + str(payload.relay_Addresses))
+            self.pico_logger.WriteNewLog("Relaying Message to: " + str(payload.relay_Addresses[position + 1]) + "\t Message: " + str(payload.message) + "\tRelay List: " + str(payload.relay_Addresses))
+            result = self.send_to_wait_relay(payload.message, payload.relay_Addresses[position + 1], header_flags=payload.header_flags, relay_Addresses=payload.relay_Addresses, header_id=payload.header_id)
+            if(result):
+                self.repeat_wait_return(payload)
+
+            else:
+                print("Result was not Successful :(")
+            #If failed, send message back
+            self.relay_payload = None
+            
+        
+        #Repeat Logic?
+        elif(position == len(payload.relay_Addresses) -1):
+            
+            reply = self.on_recv(payload)
+            relay_Addresses_reversed = self.reverse_list(payload.relay_Addresses)
+            
+            #Do not retry to send message as the other LoRa will request message again on its retry
+            result = self.send_to_wait_relay(reply, relay_Addresses_reversed[1], header_flags=FLAGS_Rept_reply, relay_Addresses=relay_Addresses_reversed, header_id=payload.header_id, retries=0)
+            self.relay_payload = None
+
+    def repeat_wait_return(self, recieved_payload):
+            position = recieved_payload.relay_Addresses.index(self._this_address)
+            wait_repeater_jumps = position - len(recieved_payload.relay_Addresses)
+            start = time.time()
+            while time.time() - start < (self.retry_timeout + (self.retry_timeout * (getrandbits(16) / (2**16 - 1))))*4*wait_repeater_jumps:
+                pass
+            print("Relay Timeout Failed")
+            #if(position == len(recieved_payload.relay_Addresses) -2 and self._last_payload):
+            #    print("Sending Reply")
+            #    relay_receive = self.send_to_wait_relay(self._last_payload.message, self._last_payload.relay_Addresses[position + 1], header_flags=self._last_payload.header_flags, relay_Addresses=self._last_payload.relay_Addresses, header_id=payload.header_id)
+            #    print("relay_receive: " + str(relay_receive))        
+        
+    def reverse_list(self, list):
+        newList = []
+        for element in reversed(list):
+            newList.append(element)
+        return newList
+        
 
     def close(self):
         self.spi.deinit()
