@@ -1,12 +1,15 @@
 import machine
 import utime
 import os
+import _thread
 
 class PicoLogger:
     def __init__(self):
         self.LogFileName = "log.txt"
         self.Max_File_Size = 600000
         self.TimeDelta = None #Needs to be set from serial
+        _thread.start_new_thread(self.ThreadWriteLog, ())
+        self._PendingLoggedData = list()
 
     def WriteFile(self, logText):
         dateTime = self.TimeNow()
@@ -53,9 +56,18 @@ class PicoLogger:
         self.TimeDelta = syncTime - int(utime.time())
 
     def WriteNewLog(self, logText):
-        while(self.CheckFileSize() > self.Max_File_Size):
-            self.RemoveOneLine()
-        self.WriteFile(logText)
+        self._PendingLoggedData.append(logText)
+        print(str(self._PendingLoggedData))
+
+    def ThreadWriteLog(self):
+        while True:
+            for logged in list(self._PendingLoggedData):
+                print("Found Logged Data: " + str(logged))
+                while(self.CheckFileSize() > self.Max_File_Size):
+                    self.RemoveOneLine()
+                self.WriteFile(logged)
+                self._PendingLoggedData.remove(logged)
+
 
     def SendLoggedDataToSerial(self):
         f = open(self.LogFileName,"r")
@@ -86,6 +98,8 @@ picoLogger.WriteNewLog("This is a new Log With A date")
 
 utime.sleep_ms(800)
 picoLogger.SendLoggedDataToSerial()
+
+_thread.start_new_thread(second_thread, ())
 """
 
 if __name__ == "__main__":
