@@ -107,10 +107,8 @@ while True:
         led.toggle()
         print("About to send: " + str(message))
         #lora.send_to_wait(str(message), Send_To_ADDRESS)
-        result = lora.send_to_wait_relay(str(message), Send_To_ADDRESS, Send_To_Relay_Addresses)
-        print(str(result))
-        if(result):
-            relay_result = lora.relay_check_repeat(True)
+        result = lora.relay_send(str(message), Send_To_ADDRESS, Send_To_Relay_Addresses)
+        
         led.toggle()
         #Listen after send? Do we need this?
         lora.set_mode_rx()

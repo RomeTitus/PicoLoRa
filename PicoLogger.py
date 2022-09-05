@@ -8,8 +8,9 @@ class PicoLogger:
         self.LogFileName = "log.txt"
         self.Max_File_Size = 600000
         self.TimeDelta = None #Needs to be set from serial
-        _thread.start_new_thread(self.ThreadWriteLog, ())
         self._PendingLoggedData = list()
+        #_thread.start_new_thread(self.ThreadWriteLog, ())
+        
 
     def WriteFile(self, logText):
         dateTime = self.TimeNow()
@@ -57,17 +58,16 @@ class PicoLogger:
 
     def WriteNewLog(self, logText):
         self._PendingLoggedData.append(logText)
-        print(str(self._PendingLoggedData))
+        #print(str(self._PendingLoggedData))
 
     def ThreadWriteLog(self):
         while True:
             for logged in list(self._PendingLoggedData):
-                print("Found Logged Data: " + str(logged))
+                #print("Found Logged Data: " + str(logged))
                 while(self.CheckFileSize() > self.Max_File_Size):
                     self.RemoveOneLine()
                 self.WriteFile(logged)
                 self._PendingLoggedData.remove(logged)
-
 
     def SendLoggedDataToSerial(self):
         f = open(self.LogFileName,"r")
@@ -80,27 +80,6 @@ class PicoLogger:
         print("Total: " + str(lineNumber))
         print("Size: " + str(f.tell()) + "\t Max: " + str(self.Max_File_Size))
         f.close()
-
-
-
-#Code Examples
-"""
-print("Creating Object!")
-picoLogger = PicoLogger()
-print("Created Object!")
-
-print("Creating new log with no Date: ")
-picoLogger.WriteNewLog("This is a new Log")
-
-print("Creating new log with Updated Date: ")
-picoLogger.SetDateTime("2022 08 23 17 03 33 0 0")
-picoLogger.WriteNewLog("This is a new Log With A date")
-
-utime.sleep_ms(800)
-picoLogger.SendLoggedDataToSerial()
-
-_thread.start_new_thread(second_thread, ())
-"""
 
 if __name__ == "__main__":
     picoLogger = PicoLogger()
