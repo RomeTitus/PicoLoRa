@@ -9,9 +9,9 @@ import time
 import machine
 import ubinascii
 
-debug_timer = 20
-
 led = Pin(25, Pin.OUT)
+#1 - Failed to send to Target
+#2 - Relay never made it back
 
 led.toggle()
 sleep(1)
@@ -41,8 +41,7 @@ CLIENT_ADDRESS3 = 3
 
 Send_To_ADDRESS = 2
 Send_To_Relay_Addresses = [1, 2, 3] #We need to add our Client Id so the message knows what LoRa to relay back to
-#_thread.start_new_thread(serial.main, ())
-# initialise radio                        #Is this Us?, Yes
+# initialise radio
 CLIENT_ADDRESS = 0
 
 if(str(ubinascii.hexlify(machine.unique_id()).decode()) == "e6612483cb821e21"):
@@ -59,8 +58,9 @@ lora.on_recv = on_recv
 
 # set to listen continuously
 lora.set_mode_rx()
-# loop and wait for data
+
 print("My Key: " + str(lora._this_address))
+
 class PicoSerial():
     def __init__(self):
         self.buffered_input = []
@@ -70,17 +70,20 @@ class PicoSerial():
             select_result = uselect.select([stdin], [], [], 0)
             while select_result[0]:
                 input_character = stdin.read(1)
+                #print(str(input_character))
                 self.buffered_input.append(input_character)
                 select_result = uselect.select([stdin], [], [], 0)
             if(len(self.buffered_input)>0):
                 message = ""
+                #print(str(self.buffered_input))
                 for charicter in self.buffered_input:
                     if(charicter == "\t" or charicter == "\n" or charicter == "" or charicter == " "):
                         continue
                     message += charicter
                 self.buffered_input = []
+                #print(str(message))
                 return message
-        finally:
+        except:
             return None
 
 picoSerial = PicoSerial()
@@ -89,31 +92,28 @@ start = time.time()
 
 while True:
     message = None
-    if(str(lora._this_address) == "1"):
-        if(time.time() - start <  debug_timer):
-            utime.sleep(0.1)
-            continue
-        print("Sending Message from Serial")
-        message = "Test Relay V3"
-    else:
-        message = picoSerial.getSerialInput()
+    message = picoSerial.getSerialInput()
     if(message):
         if(message == ""):
             continue
-        if(message == "SendLoggedDataToSerial"):
+        elif(message == "SendLoggedDataToSerial"):
             picoLogger.SendLoggedDataToSerial()
             continue
+        elif('send.' in message):
+            splitmessage = message.split('.')
+            if(len(splitmessage) < 3):
+                print("Error required send.[path].[message]")
+            led.toggle()
+            #send.path.message
+            header_id = lora.get_new_header_id()
+            print("0." + str(header_id) + "." + str(message))
+            if(len(splitmessage)> 1):
+                result = lora.relay_send(str(message), Send_To_ADDRESS, Send_To_Relay_Addresses, header_id)
+            else:
+                result = lora.send_to_wait(str(message), Send_To_ADDRESS, headerId = header_id)
+            led.toggle()
+            lora.set_mode_rx()
         
-        led.toggle()
-        print("About to send: " + str(message))
-        #lora.send_to_wait(str(message), Send_To_ADDRESS)
-        result = lora.relay_send(str(message), Send_To_ADDRESS, Send_To_Relay_Addresses)
-        
-        led.toggle()
-        #Listen after send? Do we need this?
-        lora.set_mode_rx()
-        #utime.sleep(20)
-    
     lora.relay_check_repeat()
     
     start = time.time()

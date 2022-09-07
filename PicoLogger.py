@@ -9,7 +9,7 @@ class PicoLogger:
         self.Max_File_Size = 600000
         self.TimeDelta = None #Needs to be set from serial
         self._PendingLoggedData = list()
-        #_thread.start_new_thread(self.ThreadWriteLog, ())
+        _thread.start_new_thread(self.ThreadWriteLog, ())
         
 
     def WriteFile(self, logText):
