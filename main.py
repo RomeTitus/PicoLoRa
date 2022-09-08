@@ -68,6 +68,8 @@ class PicoSerial():
     def getSerialInput(self):
         try:
             select_result = uselect.select([stdin], [], [], 0)
+            if(select_result[0]):
+                utime.sleep_ms(100)
             while select_result[0]:
                 input_character = stdin.read(1)
                 #print(str(input_character))
@@ -81,7 +83,7 @@ class PicoSerial():
                         continue
                     message += charicter
                 self.buffered_input = []
-                #print(str(message))
+                print(str(message))
                 return message
         except:
             return None
@@ -91,30 +93,39 @@ picoSerial = PicoSerial()
 start = time.time()
 
 while True:
-    message = None
-    message = picoSerial.getSerialInput()
-    if(message):
-        if(message == ""):
-            continue
-        elif(message == "SendLoggedDataToSerial"):
-            picoLogger.SendLoggedDataToSerial()
-            continue
-        elif('send.' in message):
-            splitmessage = message.split('.')
-            if(len(splitmessage) < 3):
-                print("Error required send.[path].[message]")
-            led.toggle()
-            #send.path.message
-            header_id = lora.get_new_header_id()
-            print("0." + str(header_id) + "." + str(message))
-            if(len(splitmessage)> 1):
-                result = lora.relay_send(str(message), Send_To_ADDRESS, Send_To_Relay_Addresses, header_id)
-            else:
-                result = lora.send_to_wait(str(message), Send_To_ADDRESS, headerId = header_id)
-            led.toggle()
-            lora.set_mode_rx()
+    try:
+        message = None
+        message = picoSerial.getSerialInput()
+        if(message):
+            if(message == ""):
+                continue
+            elif(message == "SendLoggedDataToSerial"):
+                picoLogger.SendLoggedDataToSerial()
+                continue
+            elif('send.' in message):
+                splitmessage = message.split('.')
+                if(len(splitmessage) < 3):
+                    print("Error required send.[path].[message]")
+                led.toggle()
+                #send.path.message
+                header_id = lora.get_new_header_id()
+                print("0." + str(header_id) + ".[" + str(message) + "]")
+                result = None
+                
+                if(len(splitmessage) > 3):
+                    for address in splitmessage[1:len(splitmessage) -2]:
+                        print(address)
+                    #result = lora.relay_send(str(message), Send_To_ADDRESS, Send_To_Relay_Addresses, header_id)
+                else:
+                    pass
+                    #result = lora.send_to_wait(str(message), Send_To_ADDRESS, headerId = header_id)
+                print(result)
+                led.toggle()
+                lora.set_mode_rx()
+            
+        lora.relay_check_repeat()
         
-    lora.relay_check_repeat()
-    
-    start = time.time()
+        start = time.time()
+    except Exception as e:
+        print("Exception: " + str(e))
 
