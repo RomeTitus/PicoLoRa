@@ -112,13 +112,15 @@ while True:
                 print("0." + str(header_id) + ".[" + str(message) + "]")
                 result = None
                 
-                if(len(splitmessage) > 3):
-                    for address in splitmessage[1:len(splitmessage) -2]:
-                        print(address)
-                    #result = lora.relay_send(str(message), Send_To_ADDRESS, Send_To_Relay_Addresses, header_id)
+                Send_To_Relay_Addresses = []
+                for address in splitmessage[1:len(splitmessage) -1]:
+                    Send_To_Relay_Addresses.append(int(address))
+
+                if(len(Send_To_Relay_Addresses) > 1):
+                    result = lora.relay_send(str(splitmessage[len(splitmessage)-1:]), Send_To_Relay_Addresses[1], Send_To_Relay_Addresses, header_id)
                 else:
-                    pass
-                    #result = lora.send_to_wait(str(message), Send_To_ADDRESS, headerId = header_id)
+                    result = lora.send_to_wait(str(splitmessage[len(splitmessage)-1:]), Send_To_Relay_Addresses[0], headerId = header_id)
+            
                 print(result)
                 led.toggle()
                 lora.set_mode_rx()
