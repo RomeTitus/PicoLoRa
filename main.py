@@ -12,6 +12,8 @@ import ubinascii
 led = Pin(25, Pin.OUT)
 #1 - Failed to send to Target
 #2 - Relay never made it back
+#3 - Relay recieved, failed to reach headerId
+#4 - Logged Data Failed to save
 
 led.toggle()
 sleep(1)
@@ -79,11 +81,13 @@ class PicoSerial():
                 message = ""
                 #print(str(self.buffered_input))
                 for charicter in self.buffered_input:
-                    if(charicter == "\t" or charicter == "\n" or charicter == "" or charicter == " "):
+                    if(charicter == "\t" or charicter == "\n" or charicter == ""):
                         continue
                     message += charicter
                 self.buffered_input = []
-                print(str(message))
+                
+                #print(str(message))
+                
                 return message
         except:
             return None
@@ -102,6 +106,11 @@ while True:
             elif(message == "SendLoggedDataToSerial"):
                 picoLogger.SendLoggedDataToSerial()
                 continue
+            #YYYY MM DD HH MM SS
+            elif("SetLoRaDateTime" in message):
+                print(picoLogger.SetDateTime(message.split('.')[1]))
+                continue
+
             elif('send.' in message):
                 splitmessage = message.split('.')
                 if(len(splitmessage) < 3):
@@ -117,6 +126,7 @@ while True:
                     Send_To_Relay_Addresses.append(int(address))
 
                 if(len(Send_To_Relay_Addresses) > 1):
+                    Send_To_Relay_Addresses.insert(0, lora._this_address)
                     result = lora.relay_send(str(splitmessage[len(splitmessage)-1:]), Send_To_Relay_Addresses[1], Send_To_Relay_Addresses, header_id)
                 else:
                     result = lora.send_to_wait(str(splitmessage[len(splitmessage)-1:]), Send_To_Relay_Addresses[0], headerId = header_id)
@@ -126,6 +136,7 @@ while True:
                 lora.set_mode_rx()
             
         lora.relay_check_repeat()
+        picoLogger.commit_log()
         
         start = time.time()
     except Exception as e:
