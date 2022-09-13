@@ -10,6 +10,7 @@ import machine
 import ubinascii
 
 led = Pin(25, Pin.OUT)
+#Warning numbers
 #1 - Failed to send to Target
 #2 - Relay never made it back
 #3 - Relay recieved, failed to reach headerId
@@ -52,6 +53,11 @@ elif(str(ubinascii.hexlify(machine.unique_id()).decode()) == "e6612483cb487b29")
     CLIENT_ADDRESS = 2
 elif(str(ubinascii.hexlify(machine.unique_id()).decode()) == "e6612483cb7ab92b"):
     CLIENT_ADDRESS = 1
+#Things to save:
+#CLIENT_ADDRESS -- will be automatic
+#freq -- From User
+#tx_power -- From User
+#modem_config -- From User
 
 lora = LoRa.LoRa(RFM95_SPIBUS, RFM95_INT, CLIENT_ADDRESS, RFM95_CS, picoLogger, reset_pin=RFM95_RST, freq=RF95_FREQ, tx_power=RF95_POW, acks=True)
 
@@ -74,20 +80,15 @@ class PicoSerial():
                 utime.sleep_ms(100)
             while select_result[0]:
                 input_character = stdin.read(1)
-                #print(str(input_character))
                 self.buffered_input.append(input_character)
                 select_result = uselect.select([stdin], [], [], 0)
             if(len(self.buffered_input)>0):
                 message = ""
-                #print(str(self.buffered_input))
                 for charicter in self.buffered_input:
                     if(charicter == "\t" or charicter == "\n" or charicter == ""):
                         continue
                     message += charicter
                 self.buffered_input = []
-                
-                #print(str(message))
-                
                 return message
         except:
             return None
