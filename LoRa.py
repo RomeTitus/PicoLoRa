@@ -163,9 +163,9 @@ class LoRa(object):
 
         # set frequency
         frf = int((self._freq * 1000000.0) / FSTEP)
-        self._spi_write(REG_06_FRF_MSB, (frf >> 16) and 0xff)
-        self._spi_write(REG_07_FRF_MID, (frf >> 8) and 0xff)
-        self._spi_write(REG_08_FRF_LSB, frf and 0xff)
+        self._spi_write(REG_06_FRF_MSB, (frf >> 16) & 0xff)
+        self._spi_write(REG_07_FRF_MID, (frf >> 8) & 0xff)
+        self._spi_write(REG_08_FRF_LSB, frf & 0xff)
         
         # Set tx power
         if self._tx_power < 5:
@@ -247,7 +247,7 @@ class LoRa(object):
 
     def send(self, data, header_to, header_id=0, header_flags=0, relay_Addresses = None):
         self.pico_logger.WriteNewLog("LoRaSending Message: " + str(data) + "\tTo " + str(header_to) + "\t relay: " + str(relay_Addresses))
-        utime.sleep(0.1)
+        #utime.sleep(0.2)
         #Just so we dont send messages while its transmitting
         self.wait_packet_sent()
         self.set_mode_idle()
@@ -266,6 +266,7 @@ class LoRa(object):
             data = [b for b in self._encrypt(bytes(data))]
         
         payload = header + data
+        #print("payload: " + str(payload))
         self._spi_write(REG_0D_FIFO_ADDR_PTR, 0)
         self._spi_write(REG_00_FIFO, payload)
         self._spi_write(REG_22_PAYLOAD_LENGTH, len(payload))
@@ -381,7 +382,7 @@ class LoRa(object):
 
     def _handle_interrupt(self, channel):
         irq_flags = self._spi_read(REG_12_IRQ_FLAGS)
-        if self._mode == MODE_RXCONTINUOUS and (irq_flags and RX_DONE):
+        if self._mode == MODE_RXCONTINUOUS and (irq_flags & RX_DONE):
             
             packet_len = self._spi_read(REG_13_RX_NB_BYTES)
             self._spi_write(REG_0D_FIFO_ADDR_PTR, self._spi_read(REG_10_FIFO_RX_CURRENT_ADDR))
@@ -438,7 +439,7 @@ class LoRa(object):
                     ['message', 'header_to', 'header_from', 'header_id', 'header_flags', 'relay_Addresses', 'rssi', 'snr']
                 )(message, header_to, header_from, header_id, header_flags, relay_Addresses, rssi, snr)
                 
-                if not header_flags and FLAGS_ACK:
+                if not header_flags & FLAGS_ACK:
                     self.on_recv(self._last_payload)
 
 

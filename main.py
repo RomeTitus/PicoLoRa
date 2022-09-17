@@ -14,7 +14,8 @@ led = Pin(25, Pin.OUT)
 #1 - Failed to send to Target
 #2 - Relay never made it back
 #3 - Relay recieved, failed to reach headerId
-#4 - Logged Data Failed to save
+#4 - Messaged Made it but controller did not reply back
+#5 - Logged Data Failed to save
 
 led.toggle()
 sleep(1)
@@ -95,8 +96,6 @@ class PicoSerial():
 
 picoSerial = PicoSerial()
 
-start = time.time()
-
 while True:
     try:
         message = None
@@ -130,6 +129,7 @@ while True:
                     Send_To_Relay_Addresses.insert(0, lora._this_address)
                     result = lora.relay_send(str(splitmessage[len(splitmessage)-1:]), Send_To_Relay_Addresses[1], Send_To_Relay_Addresses, header_id)
                 else:
+                    print("Message: " + str(splitmessage[len(splitmessage)-1:]) + "\t Sending To: " + str(Send_To_Relay_Addresses[0]) + "\t With Header: " + str(header_id))
                     result = lora.send_to_wait(str(splitmessage[len(splitmessage)-1:]), Send_To_Relay_Addresses[0], headerId = header_id)
             
                 print(result)
@@ -138,8 +138,6 @@ while True:
             
         lora.relay_check_repeat()
         picoLogger.commit_log()
-        
-        start = time.time()
     except Exception as e:
         print("Exception: " + str(e))
 
