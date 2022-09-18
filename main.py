@@ -10,6 +10,17 @@ import machine
 import ubinascii
 
 led = Pin(25, Pin.OUT)
+
+reply_timeout = 0.5 #seconds
+
+#Commands
+#Send.path.message [use H for message to get all RSSI and SNR]
+#Send.path.path.message
+#Recieved.headerId.message
+
+#SetLoRaDateTime.YYYY MM DD HH MM SS
+#SendLoggedDataToSerial
+
 #Warning numbers
 #1 - Failed to send to Target
 #2 - Relay never made it back
@@ -22,13 +33,35 @@ sleep(1)
 led.toggle()
 
 picoLogger = PicoLogger.PicoLogger()
+
 # This is our callback function that runs when a message is received
 def on_recv(payload):
     led.toggle()
-    picoLogger.WriteNewLog("LoRa Recieved: " + str(payload))
-    print("Getting Reply From Irrigation...Done")
-    #utime.sleep(0.5)
-    return "Pressure"
+    headerFrom = payload.header_from
+    message = payload.message
+    if('relay_Addresses' in str(payload) and len(payload.relay_Addresses) > 0):
+        headerFrom = payload.relay_Addresses[0]
+    
+    if(type(message) is bytes):
+        message = message.decode("utf-8") 
+
+    picoLogger.WriteNewLog("Recieved." + str(headerFrom)  + '.' + str(payload.header_id) + "." + str(message) + '.rssi' + str(payload.rssi) + '.snr' + str(payload.snr))
+    
+    print("Recieved." + str(headerFrom)  + '.' + str(payload.header_id) + "." + str(message) + '.rssi' + str(payload.rssi) + '.snr' + str(payload.snr))
+    
+    #0.5 seconds to reply, is that too fast?
+    Start_reply_time = time.ticks_us()
+    while (float(time.ticks_diff(time.ticks_us(), Start_reply_time)) < reply_timeout * 1000000):
+        picoSerial.ReadInput()
+        for timestamp in list(picoSerial.loRaReplies):
+            for headerId in picoSerial.loRaReplies[timestamp]:
+                if(str(headerId) == str(payload.header_id)):
+                    picoLogger.WriteNewLog("Returning Message: " + str(picoSerial.loRaReplies[timestamp][headerId]))
+                    reply = picoSerial.loRaReplies[timestamp][headerId]
+                    #TODO do we want to delete straigh away?
+                    del  picoSerial.loRaReplies[timestamp]
+                    return reply
+    return "4"
 
 # Lora Parameters
 RFM95_RST = 27
@@ -73,8 +106,10 @@ print("My Key: " + str(lora._this_address))
 class PicoSerial():
     def __init__(self):
         self.buffered_input = []
+        self.loRaReplies = {}
+        self.loRaSenting = {}
 
-    def getSerialInput(self):
+    def GetSerialInput(self):
         try:
             select_result = uselect.select([stdin], [], [], 0)
             if(select_result[0]):
@@ -94,31 +129,49 @@ class PicoSerial():
         except:
             return None
 
+    def ReadInput(self):
+        message = None
+        message = self.GetSerialInput()
+        if(message and message != ""):
+            if("Recieved." in message):
+                splitmessage = message.split('.')
+                self.loRaReplies[utime.time()] = {splitmessage[1]: splitmessage[2]}
+            else:
+                splitmessage = message.split('.')
+                self.loRaSenting[utime.time()] = message
+        
+        #Clean Old Messages
+        for key in list(self.loRaReplies):
+            if(utime.time() - key > 10):
+                del self.loRaReplies[key]
+                
+        for key in list(self.loRaSenting):
+            if(utime.time() - key > 10):
+                del self.loRaSenting[key]
+
 picoSerial = PicoSerial()
 
 while True:
     try:
-        message = None
-        message = picoSerial.getSerialInput()
-        if(message):
-            if(message == ""):
-                continue
-            elif(message == "SendLoggedDataToSerial"):
+        for timestapm in list(picoSerial.loRaSenting):
+            message = picoSerial.loRaSenting[timestapm]
+            del picoSerial.loRaSenting[timestapm]
+            #YYYY MM DD HH MM SS
+            if("SetLoRaDateTime" in message):
+                print(picoLogger.SetDateTime(message.split('.')[1]))
+
+            if(message == "SendLoggedDataToSerial"):
                 picoLogger.SendLoggedDataToSerial()
                 continue
-            #YYYY MM DD HH MM SS
-            elif("SetLoRaDateTime" in message):
-                print(picoLogger.SetDateTime(message.split('.')[1]))
-                continue
 
-            elif('send.' in message):
+            elif('Send.' in message):
                 splitmessage = message.split('.')
                 if(len(splitmessage) < 3):
-                    print("Error required send.[path].[message]")
+                    print("Error required Send.path.message")
                 led.toggle()
                 #send.path.message
                 header_id = lora.get_new_header_id()
-                print("0." + str(header_id) + ".[" + str(message) + "]")
+                print("0." + str(header_id) + "." + str(message) + "")
                 result = None
                 
                 Send_To_Relay_Addresses = []
@@ -127,17 +180,21 @@ while True:
 
                 if(len(Send_To_Relay_Addresses) > 1):
                     Send_To_Relay_Addresses.insert(0, lora._this_address)
-                    result = lora.relay_send(str(splitmessage[len(splitmessage)-1:]), Send_To_Relay_Addresses[1], Send_To_Relay_Addresses, header_id)
+                    result = lora.relay_send(str(splitmessage[len(splitmessage)-1]), Send_To_Relay_Addresses[1], Send_To_Relay_Addresses, header_id)
                 else:
-                    print("Message: " + str(splitmessage[len(splitmessage)-1:]) + "\t Sending To: " + str(Send_To_Relay_Addresses[0]) + "\t With Header: " + str(header_id))
-                    result = lora.send_to_wait(str(splitmessage[len(splitmessage)-1:]), Send_To_Relay_Addresses[0], headerId = header_id)
-            
+                    result = lora.send_to_wait(str(splitmessage[len(splitmessage)-1]), Send_To_Relay_Addresses[0], headerId = header_id)
+                    
                 print(result)
                 led.toggle()
                 lora.set_mode_rx()
             
         lora.relay_check_repeat()
         picoLogger.commit_log()
+        picoSerial.ReadInput()
+        
+
     except Exception as e:
         print("Exception: " + str(e))
+
+    
 
