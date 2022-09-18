@@ -266,7 +266,6 @@ class LoRa(object):
             data = [b for b in self._encrypt(bytes(data))]
         
         payload = header + data
-        #print("payload: " + str(payload))
         self._spi_write(REG_0D_FIFO_ADDR_PTR, 0)
         self._spi_write(REG_00_FIFO, payload)
         self._spi_write(REG_22_PAYLOAD_LENGTH, len(payload))
@@ -295,29 +294,28 @@ class LoRa(object):
                             self._last_payload.header_id == self._last_header_id:
                         self.pico_logger.WriteNewLog("Direct Message Reply: " + str(self._last_payload))
                         if(data == "H"):
-                            self._last_payload = self.convert_lora_rssi_snr(self._last_payload)
+                            modifiedMessage = self.convert_lora_rssi_snr(self._last_payload.message[2:])
+                            return namedtuple(
+                                "Payload",
+                                ['message', 'header_to', 'header_from', 'header_id', 'header_flags', 'relay_Addresses', 'rssi', 'snr']
+                                )(modifiedMessage, self._last_payload.header_to, self._last_payload.header_from, self._last_payload.header_id, self._last_payload.header_flags, self._last_payload.relay_Addresses, self._last_payload.rssi, self._last_payload.snr)
+                                
                         return self._last_payload
         self.pico_logger.WriteNewLog("1." + str(header_to) +".LoRa Could not Contact")
         return "1." + str(header_to) +".LoRa Could not Contact"
 
-    def convert_lora_rssi_snr(self, rssi_snr_payload):
-        index = 1
+    def convert_lora_rssi_snr(self, incomming_message):
         modifiedMessage = ""
-        for message in rssi_snr_payload.message:    
-            #print(str(message))
-            if(index == 1):
-                modifiedMessage += "rssi" + str((int(message) - 40) *-1)
-                index = 2
-            elif(index == 2):
-                modifiedMessage += "snr" + str(int(message) - 40)
-                
-                index = 1
-        payload = namedtuple(
-            "Payload",
-            ['message', 'header_to', 'header_from', 'header_id', 'header_flags', 'relay_Addresses', 'rssi', 'snr']
-            )(modifiedMessage, rssi_snr_payload.header_to, rssi_snr_payload.header_from, rssi_snr_payload.header_id, rssi_snr_payload.header_flags, rssi_snr_payload.relay_Addresses, rssi_snr_payload.rssi, rssi_snr_payload.snr)
-
-        return payload
+        splitMessage = incomming_message.split(b'.')
+        print("incomming_message: " + str(incomming_message))
+        print(str(splitMessage))
+        for message in splitMessage:
+            modifiedMessage += "rssi" + str((int(message[0]) - 40) *-1)
+            modifiedMessage += "snr" + str(int(message[1]) - 40) + "."
+            
+        modifiedMessage = modifiedMessage[:len(modifiedMessage)-1]
+        print(modifiedMessage)
+        return modifiedMessage
                 
     def send_to_wait_relay(self, data, header_to, relay_Addresses, header_flags=FLAGS_REPT_SEND, retries=3, header_id = 0):
         if(header_id != 0):
@@ -363,18 +361,21 @@ class LoRa(object):
         
     def send_ack(self, header_to, header_id):
         reply = None
-        if(self._last_payload.message == b'H'):
-            rssi = int(self._last_payload.rssi*-1) + 40
-            snr = int(self._last_payload.snr + 40)
-            #print("rssi\t" + str(self._last_payload.rssi) + "\t" + str(rssi) + "\t" + str(chr(rssi)))
-            #print("snr\t" + str(self._last_payload.snr) + "\t" + str(snr) + "\t" + str(chr(snr)))
-            reply = chr(rssi) + chr(snr)
-            #print("sending: " + reply)
-            #print("converted: " + str(ord(reply[0])) + "\t" + str(ord(reply[1])))
+        rssi_snr_message = self._set_rssi_snr_to_message(self._last_payload.message, self._last_payload.rssi, self._last_payload.snr)
+        if(rssi_snr_message != self._last_payload.message):
+            reply = rssi_snr_message
         else:
             reply = self.on_recv(self._last_payload)
         self.send(reply, header_to, header_id, FLAGS_ACK)
         self.wait_packet_sent()
+
+    
+    def _set_rssi_snr_to_message(self, message, rssi, snr):
+        if(ord('H') == message[0]) and len(message) == 1 or (len(message)> 1 and ord('.') == message[1]):
+            _rssi = int(rssi*-1) + 40
+            _snr = int(snr + 40)
+            return message + '.' + chr(_rssi) + chr(_snr)
+        return message
 
     def send_relay_ack(self, header_to, header_id):
         self.send(b'!', header_to, header_id, FLAGS_REPT_REPLY)
@@ -519,15 +520,17 @@ class LoRa(object):
         
         if(position < len(payload.relay_Addresses) -1 ):
             self.pico_logger.WriteNewLog("Relaying Message to: " + str(payload.relay_Addresses[position + 1]) + "\t Message: " + str(payload.message) + "\tRelay List: " + str(payload.relay_Addresses))
-            result = self.send_to_wait_relay(payload.message, payload.relay_Addresses[position + 1], header_flags=payload.header_flags, relay_Addresses=payload.relay_Addresses, header_id=payload.header_id)
+            payloadMessage = self._set_rssi_snr_to_message(payload.message, payload.rssi, payload.snr)
+            result = self.send_to_wait_relay(payloadMessage, payload.relay_Addresses[position + 1], header_flags=payload.header_flags, relay_Addresses=payload.relay_Addresses, header_id=payload.header_id)
             if(result):
                 start = time.time_ns()
                 responded_payload = self.repeat_wait_return(payload)
                 if(responded_payload):
+                    
                     responded_position = responded_payload.relay_Addresses.index(self._this_address)
                     self._last_payload = None
-                    result = self.send_to_wait_relay(responded_payload.message, responded_payload.relay_Addresses[responded_position + 1], header_flags=responded_payload.header_flags, relay_Addresses=responded_payload.relay_Addresses, header_id=responded_payload.header_id)
-                    
+                    payloadMessage = self._set_rssi_snr_to_message(responded_payload.message, responded_payload.rssi, responded_payload.snr)
+                    result = self.send_to_wait_relay(payloadMessage, responded_payload.relay_Addresses[responded_position + 1], header_flags=responded_payload.header_flags, relay_Addresses=responded_payload.relay_Addresses, header_id=responded_payload.header_id)
                     self.pico_logger.WriteNewLog("LoRa got a response from Repeat Reply: " + str(responded_payload.message))
                 else:    
                     self.pico_logger.WriteNewLog("2."+ str(payload.relay_Addresses[position + 1]) + ".Fording message never returned Time_ns: " + str(time.time_ns() - start))
@@ -548,7 +551,11 @@ class LoRa(object):
         relay_Addresses = payload.relay_Addresses
         #Relay Made it to destination
         if(position == len(relay_Addresses) -1):
-            reply = self.on_recv(payload)
+            payloadMessage = self._set_rssi_snr_to_message(payload.message, payload.rssi, payload.snr)
+            if(payloadMessage != payload.message):
+                reply = payloadMessage
+            else:
+                reply = self.on_recv(payload)
             
         else:
             reply = "3." + str(relay_Addresses[position + 1])
@@ -575,6 +582,12 @@ class LoRa(object):
             while time.time() - start < (self.retry_timeout + (self.retry_timeout * (getrandbits(16) / (2**16 - 1))))*4*wait_repeater_jumps:
                 if self._last_payload and self._last_payload.header_flags == FLAGS_REPT_REPLY and \
                     self._last_payload.header_id == recieved_payload.header_id:
+                    if(b'H.' == self._last_payload.message[:2] and self._last_payload.relay_Addresses.index(self._this_address) == len(self._last_payload.relay_Addresses) -1):
+                        modifiedMessage = self.convert_lora_rssi_snr(self._last_payload.message[2:])
+                        return namedtuple(
+                                "Payload",
+                                ['message', 'header_to', 'header_from', 'header_id', 'header_flags', 'relay_Addresses', 'rssi', 'snr']
+                                )(modifiedMessage, self._last_payload.header_to, self._last_payload.header_from, self._last_payload.header_id, self._last_payload.header_flags, self._last_payload.relay_Addresses, self._last_payload.rssi, self._last_payload.snr)
                     return self._last_payload
             return None        
         
@@ -591,7 +604,6 @@ class LoRa(object):
                     
         start = time.time_ns()
         responded_payload = self.repeat_wait_return(payload)
-
         if(responded_payload):
             self.pico_logger.WriteNewLog("Responded Relay: Time_ns: " + str(time.time_ns() - start) + "\t Paylaod: " + str(responded_payload))
             result = self.send_relay_ack(responded_payload.header_from, responded_payload.header_id)

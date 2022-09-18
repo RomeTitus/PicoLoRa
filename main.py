@@ -171,7 +171,7 @@ while True:
                 led.toggle()
                 #send.path.message
                 header_id = lora.get_new_header_id()
-                print("0." + str(header_id) + "." + str(message) + "")
+                print("0." + str(header_id) + "." + str(message))
                 result = None
                 
                 Send_To_Relay_Addresses = []
