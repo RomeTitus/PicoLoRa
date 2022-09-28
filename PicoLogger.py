@@ -2,7 +2,8 @@ import utime
 import os
 
 class PicoLogger:
-    def __init__(self):
+    def __init__(self, picoSerial):
+        self.PicoSerial = picoSerial
         self.LogFileName = "log.txt"
         self.Max_File_Size = 300000
         self.TimeDelta = None #Needs to be set from serial
@@ -29,7 +30,7 @@ class PicoLogger:
             if(len(splitList)>0):
                 self.BatchWriteFile(splitList)
         except Exception as e:
-            print("4: commit_log Logged data could not be saved to board: " + str(e))
+            self.PicoSerial.Write("4: commit_log Logged data could not be saved to board: " + str(e))
 
     def BatchWriteFile(self, loggTextList):
         try:
@@ -39,7 +40,7 @@ class PicoLogger:
             logFile.flush()
             logFile.close()
         except Exception as e:
-            print("4: BatchWriteFile Logged data could not be saved to board: " + str(e))
+            self.PicoSerial.Write("4: BatchWriteFile Logged data could not be saved to board: " + str(e))
 
     def TimeNow(self):
         if(self.TimeDelta is not None):
@@ -85,21 +86,16 @@ class PicoLogger:
 
     def SendLogToSerial(self, logFile):
         line = logFile.readline()
-        lineNumber = 0
         while line:
-             print(str(line))
-             lineNumber += 1
+             self.PicoSerial.Write(str(line), False)
              line = logFile.readline()
-        return lineNumber
-
+        
     def SendLoggedDataToSerial(self):
         self.commit_log(True)
-        totalLines = 0
-        totalSize = 0
         for fileName in os.listdir():
             if(self.LogFileName not in fileName):
                 continue
             file = open(fileName, "r")
-            totalSize += file.tell()
-            totalLines += self.SendLogToSerial(file)
+            self.SendLogToSerial(file)
             file.close()
+        self.PicoSerial.Write(None)

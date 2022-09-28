@@ -1,25 +1,28 @@
+import utime
 import LoRa
 import PicoLogger
-from machine import Pin
-from time import sleep
-from sys import stdin
-import utime
-import uselect
-import time
+import LoRaConfig
+import Serial
 import machine
-import ubinascii
+from time import sleep
 
-led = Pin(25, Pin.OUT)
+import time
 
+led = machine.Pin(25, machine.Pin.OUT)
+
+
+picoSerial = Serial.PicoSerial()
+picoLogger = PicoLogger.PicoLogger(picoSerial)
+loRaConfig = LoRaConfig.LoRaConfig(picoSerial, picoLogger)
 reply_timeout = 0.5 #seconds
 
 #Commands
-#Send.path.message [use H for message to get all RSSI and SNR]
-#Send.path.path.message
-#Recieved.headerId.message
-
-#SetLoRaDateTime.YYYY MM DD HH MM SS
+#Send,path,message [use H for message to get all RSSI and SNR]
+#Send,path,path,message
+#Recieved,headerId,message
+#SetLoRaDateTime,YYYY MM DD HH MM SS
 #SendLoggedDataToSerial
+#Config,client_address,freq,tx_power,modem_config
 
 #Warning numbers
 #1 - Failed to send to Target
@@ -32,7 +35,7 @@ led.toggle()
 sleep(1)
 led.toggle()
 
-picoLogger = PicoLogger.PicoLogger()
+
 
 # This is our callback function that runs when a message is received
 def on_recv(payload):
@@ -47,8 +50,7 @@ def on_recv(payload):
 
     picoLogger.WriteNewLog("Recieved." + str(headerFrom)  + '.' + str(payload.header_id) + "." + str(message) + '.rssi' + str(payload.rssi) + '.snr' + str(payload.snr))
     
-    print("Recieved." + str(headerFrom)  + '.' + str(payload.header_id) + "." + str(message) + '.rssi' + str(payload.rssi) + '.snr' + str(payload.snr))
-    
+    picoSerial.Write("Recieved." + str(headerFrom)  + '.' + str(payload.header_id) + "." + str(message) + '.rssi' + str(payload.rssi) + '.snr' + str(payload.snr))
     #0.5 seconds to reply, is that too fast?
     Start_reply_time = time.ticks_us()
     while (float(time.ticks_diff(time.ticks_us(), Start_reply_time)) < reply_timeout * 1000000):
@@ -68,133 +70,98 @@ RFM95_RST = 27
 RFM95_SPIBUS = LoRa.SPIConfig.rp2_0
 RFM95_CS = 5
 RFM95_INT = 28
-RF95_FREQ = 433.3
-RF95_POW = 20
 
-#Used For Testing Picos
-CLIENT_ADDRESS1 = 1
-CLIENT_ADDRESS2 = 2
-CLIENT_ADDRESS3 = 3
 
-Send_To_ADDRESS = 2
-Send_To_Relay_Addresses = [1, 2, 3] #We need to add our Client Id so the message knows what LoRa to relay back to
-# initialise radio
-CLIENT_ADDRESS = 0
 
-if(str(ubinascii.hexlify(machine.unique_id()).decode()) == "e6612483cb821e21"):
-    CLIENT_ADDRESS = 3
-elif(str(ubinascii.hexlify(machine.unique_id()).decode()) == "e6612483cb487b29"):
-    CLIENT_ADDRESS = 2
-elif(str(ubinascii.hexlify(machine.unique_id()).decode()) == "e6612483cb7ab92b"):
-    CLIENT_ADDRESS = 1
-#Things to save:
-#CLIENT_ADDRESS -- will be automatic
-#freq -- From User
-#tx_power -- From User
-#modem_config -- From User
 
-lora = LoRa.LoRa(RFM95_SPIBUS, RFM95_INT, CLIENT_ADDRESS, RFM95_CS, picoLogger, reset_pin=RFM95_RST, freq=RF95_FREQ, tx_power=RF95_POW, acks=True)
 
-# set callback
-lora.on_recv = on_recv
+def send_to_lora(message):
+    splitmessage = message.split(',')
+    if(len(splitmessage) < 3):
+        picoSerial.Write("Error required Send,path,message")
+        return
+    led.toggle()
 
-# set to listen continuously
-lora.set_mode_rx()
+    if(lora is None):
+        picoSerial.Write("0,404," + str(message))
+        return
+    #send,path,message
+    header_id = lora.get_new_header_id()
+    picoSerial.Write("0," + str(header_id) + "," + str(message))
+    result = None
+    
+    Send_To_Relay_Addresses = []
+    for address in splitmessage[1:len(splitmessage) -1]:
+        Send_To_Relay_Addresses.append(int(address))
 
-print("My Key: " + str(lora._this_address))
+    if(len(Send_To_Relay_Addresses) > 1):
+        Send_To_Relay_Addresses.insert(0, lora._this_address)
+        result = lora.relay_send(str(splitmessage[len(splitmessage)-1]), Send_To_Relay_Addresses[1], Send_To_Relay_Addresses, header_id)
+    else:
+        result = lora.send_to_wait(str(splitmessage[len(splitmessage)-1]), Send_To_Relay_Addresses[0], headerId = header_id)
+    picoSerial.Write(str(result))
+    led.toggle()
+    lora.set_mode_rx()
 
-class PicoSerial():
-    def __init__(self):
-        self.buffered_input = []
-        self.loRaReplies = {}
-        self.loRaSenting = {}
-
-    def GetSerialInput(self):
-        try:
-            select_result = uselect.select([stdin], [], [], 0)
-            if(select_result[0]):
-                utime.sleep_ms(100)
-            while select_result[0]:
-                input_character = stdin.read(1)
-                self.buffered_input.append(input_character)
-                select_result = uselect.select([stdin], [], [], 0)
-            if(len(self.buffered_input)>0):
-                message = ""
-                for charicter in self.buffered_input:
-                    if(charicter == "\t" or charicter == "\n" or charicter == ""):
-                        continue
-                    message += charicter
-                self.buffered_input = []
-                return message
-        except:
-            return None
-
-    def ReadInput(self):
-        message = None
-        message = self.GetSerialInput()
-        if(message and message != ""):
-            if("Recieved." in message):
-                splitmessage = message.split('.')
-                self.loRaReplies[utime.time()] = {splitmessage[1]: splitmessage[2]}
-            else:
-                splitmessage = message.split('.')
-                self.loRaSenting[utime.time()] = message
+def set_lora_config(message):
+    config =  message[7:]
+    result = loRaConfig.write_config(config)
+    picoSerial.Write(str(result))
         
-        #Clean Old Messages
-        for key in list(self.loRaReplies):
-            if(utime.time() - key > 10):
-                del self.loRaReplies[key]
-                
-        for key in list(self.loRaSenting):
-            if(utime.time() - key > 10):
-                del self.loRaSenting[key]
+    if(type(result) == str):
+        return
+    return get_LoRa(result)
 
-picoSerial = PicoSerial()
+def get_LoRa(pico_logger):
+    try:
+        modemList = [LoRa.ModemConfig.Bw125Cr45Sf128, LoRa.ModemConfig.Bw500Cr45Sf128, LoRa.ModemConfig.Bw31_25Cr48Sf512, LoRa.ModemConfig.Bw125Cr48Sf4096, LoRa.ModemConfig.Bw125Cr45Sf2048]
+        loraConfig = loRaConfig.read_config()
+        if(loraConfig is None):
+            pico_logger.WriteNewLog("LoRa not setup")
+            return loraConfig
+        lora = LoRa.LoRa(RFM95_SPIBUS, RFM95_INT, loraConfig.client_address, RFM95_CS, picoLogger, reset_pin=RFM95_RST, freq=loraConfig.freq, tx_power=loraConfig.tx_power, acks=True, modem_config=modemList[loraConfig.modem_config])
+        # set callback
+        lora.on_recv = on_recv
+        # set to listen continuously
+        lora.set_mode_rx()
+        return lora
+    except Exception as e:
+        picoSerial.Write("LoRa Fatal: " + str(e))
+
+lora = get_LoRa(picoLogger)
 
 while True:
     try:
         for timestapm in list(picoSerial.loRaSenting):
             message = picoSerial.loRaSenting[timestapm]
             del picoSerial.loRaSenting[timestapm]
+            print(message)
+            
             #YYYY MM DD HH MM SS
             if("SetLoRaDateTime" in message):
-                print(picoLogger.SetDateTime(message.split('.')[1]))
+                picoSerial.Write(picoLogger.SetDateTime(message.split(',')[1]))
 
             if(message == "SendLoggedDataToSerial"):
                 picoLogger.SendLoggedDataToSerial()
                 continue
 
-            elif('Send.' in message):
-                splitmessage = message.split('.')
-                if(len(splitmessage) < 3):
-                    print("Error required Send.path.message")
-                led.toggle()
-                #send.path.message
-                header_id = lora.get_new_header_id()
-                print("0." + str(header_id) + "." + str(message))
-                result = None
+            elif('Send,' in message):
+                send_to_lora(message)
                 
-                Send_To_Relay_Addresses = []
-                for address in splitmessage[1:len(splitmessage) -1]:
-                    Send_To_Relay_Addresses.append(int(address))
-
-                if(len(Send_To_Relay_Addresses) > 1):
-                    Send_To_Relay_Addresses.insert(0, lora._this_address)
-                    result = lora.relay_send(str(splitmessage[len(splitmessage)-1]), Send_To_Relay_Addresses[1], Send_To_Relay_Addresses, header_id)
-                else:
-                    result = lora.send_to_wait(str(splitmessage[len(splitmessage)-1]), Send_To_Relay_Addresses[0], headerId = header_id)
-                    
-                print(result)
-                led.toggle()
-                lora.set_mode_rx()
+            elif('Config,' in message):
+                lora = set_lora_config(message)
             
-        lora.relay_check_repeat()
+        if(lora is not None):
+            lora.relay_check_repeat()
+        
         picoLogger.commit_log()
         picoSerial.ReadInput()
+        #picoSerial.Write("This is a Test")
+        #utime.sleep(3)
         
 
     except Exception as e:
-        print("Exception: " + str(e))
+        picoSerial.Write("Exception: " + str(e))
 
     
 

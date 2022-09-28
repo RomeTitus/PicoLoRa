@@ -307,14 +307,11 @@ class LoRa(object):
     def convert_lora_rssi_snr(self, incomming_message):
         modifiedMessage = ""
         splitMessage = incomming_message.split(b'.')
-        print("incomming_message: " + str(incomming_message))
-        print(str(splitMessage))
         for message in splitMessage:
             modifiedMessage += "rssi" + str((int(message[0]) - 40) *-1)
             modifiedMessage += "snr" + str(int(message[1]) - 40) + "."
             
         modifiedMessage = modifiedMessage[:len(modifiedMessage)-1]
-        print(modifiedMessage)
         return modifiedMessage
                 
     def send_to_wait_relay(self, data, header_to, relay_Addresses, header_flags=FLAGS_REPT_SEND, retries=3, header_id = 0):
