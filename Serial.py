@@ -7,7 +7,7 @@ class PicoSerial():
     def __init__(self):
         self.buffered_input = []
         self.loRaReplies = {}
-        self.loRaSenting = {}
+        self.loRaSending = {}
         self.uart = machine.UART(0, 38400)
         self.pinSerialWrite = machine.Pin(2, machine.Pin.OUT)
         self.pinSerialWrite.low()
@@ -37,23 +37,14 @@ class PicoSerial():
             message = ""
             bitesLen = self.uart.any()
             while bitesLen:
-                #print("Checkinggg")
                 uartCharicter = self.uart.read(bitesLen)
                 utime.sleep(0.1)
                 bitesLen = self.uart.any()
-                #print(message)
                 if(uartCharicter is not None):
                     message += uartCharicter.decode("utf-8") 
-                    #print(type(message))
-                    
-                    #message = message.decode("utf-8") 
-                    #print(type(message))
-                    #print(">> " + message)
-            #print(message)
             if(message == ""):
                 return None
             
-            #print(message)
             return message
         except:
             return None
@@ -67,17 +58,17 @@ class PicoSerial():
             if(utime.time() - key > 10):
                 del self.loRaReplies[key]
                 
-        for key in list(self.loRaSenting):
+        for key in list(self.loRaSending):
             if(utime.time() - key > 10):
-                del self.loRaSenting[key]
+                del self.loRaSending[key]
 
     def _SetMessageToDic(self, message):
         if(message and message != ""):
-            if("Recieved." in message):
+            if("Recieved," in message):
                 splitmessage = message.split(',')
                 self.loRaReplies[utime.time()] = {splitmessage[1]: splitmessage[2]}
             else:
-                self.loRaSenting[utime.time()] = message
+                self.loRaSending[utime.time()] = message
 
     def Write(self, message, streamDataComplete = True):
         if(message is not None):

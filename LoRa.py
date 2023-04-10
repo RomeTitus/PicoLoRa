@@ -447,7 +447,7 @@ class LoRa(object):
                 message = bytes(packet[5 + relay_Addresses_len:]) if packet_len > 5 else b''
                 
                 self.pico_logger.WriteNewLog("LoRa Message on Air: header_from: " + str(header_from) + "\theader_to: " + str(header_to) + "\theader_id: " + str(header_id) +  "\tmessage: " + str(message) + "\trssi: " + str(rssi) + "\tsnr: " + str(snr))
-            
+                #print("header_to: " + str(header_to) + "___header_from: " + str(header_from) + "___message: " + str(message))
                 if(self.relay_check_ack(header_to, header_from, header_id, header_flags, relay_Addresses_len, relay_Addresses, message, rssi, snr)):
                     return
                 if self.crypto and len(message) % 16 == 0:

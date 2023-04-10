@@ -10,11 +10,10 @@ import time
 
 led = machine.Pin(25, machine.Pin.OUT)
 
-
 picoSerial = Serial.PicoSerial()
 picoLogger = PicoLogger.PicoLogger(picoSerial)
 loRaConfig = LoRaConfig.LoRaConfig(picoSerial, picoLogger)
-reply_timeout = 0.5 #seconds
+reply_timeout = 1 #seconds
 
 #Commands
 #Send,path,message [use H for message to get all RSSI and SNR]
@@ -22,7 +21,8 @@ reply_timeout = 0.5 #seconds
 #Recieved,headerId,message
 #SetLoRaDateTime,YYYY MM DD HH MM SS
 #SendLoggedDataToSerial
-#Config,client_address,freq,tx_power,modem_config
+#SetConfig,client_address,freq,tx_power,modem_config
+#GetConfig
 
 #Warning numbers
 #1 - Failed to send to Target
@@ -48,9 +48,9 @@ def on_recv(payload):
     if(type(message) is bytes):
         message = message.decode("utf-8") 
 
-    picoLogger.WriteNewLog("Recieved." + str(headerFrom)  + '.' + str(payload.header_id) + "." + str(message) + '.rssi' + str(payload.rssi) + '.snr' + str(payload.snr))
+    picoLogger.WriteNewLog("Recieved," + str(headerFrom)  + ',' + str(payload.header_id) + "," + str(message) + ',rssi' + str(payload.rssi) + ',snr' + str(payload.snr))
     
-    picoSerial.Write("Recieved." + str(headerFrom)  + '.' + str(payload.header_id) + "." + str(message) + '.rssi' + str(payload.rssi) + '.snr' + str(payload.snr))
+    picoSerial.Write("Recieved," + str(headerFrom)  + ',' + str(payload.header_id) + "," + str(message) + ',rssi' + str(payload.rssi) + ',snr' + str(payload.snr))
     #0.5 seconds to reply, is that too fast?
     Start_reply_time = time.ticks_us()
     while (float(time.ticks_diff(time.ticks_us(), Start_reply_time)) < reply_timeout * 1000000):
@@ -70,10 +70,6 @@ RFM95_RST = 27
 RFM95_SPIBUS = LoRa.SPIConfig.rp2_0
 RFM95_CS = 5
 RFM95_INT = 28
-
-
-
-
 
 def send_to_lora(message):
     splitmessage = message.split(',')
@@ -104,13 +100,16 @@ def send_to_lora(message):
     lora.set_mode_rx()
 
 def set_lora_config(message):
-    config =  message[7:]
+    config =  message[10:]
     result = loRaConfig.write_config(config)
-    picoSerial.Write(str(result))
+    picoSerial.Write('0,' + str(message) + ',' + str(result))
         
     if(type(result) == str):
         return
     return get_LoRa(result)
+
+def get_lora_config():
+    picoSerial.Write('0,GetConfig,' + str(loRaConfig.read_config()))
 
 def get_LoRa(pico_logger):
     try:
@@ -132,10 +131,9 @@ lora = get_LoRa(picoLogger)
 
 while True:
     try:
-        for timestapm in list(picoSerial.loRaSenting):
-            message = picoSerial.loRaSenting[timestapm]
-            del picoSerial.loRaSenting[timestapm]
-            print(message)
+        for timestapm in list(picoSerial.loRaSending):
+            message = picoSerial.loRaSending[timestapm]
+            del picoSerial.loRaSending[timestapm]
             
             #YYYY MM DD HH MM SS
             if("SetLoRaDateTime" in message):
@@ -148,16 +146,17 @@ while True:
             elif('Send,' in message):
                 send_to_lora(message)
                 
-            elif('Config,' in message):
+            elif('SetConfig,' in message):
                 lora = set_lora_config(message)
+
+            elif(message == 'GetConfig'):
+                lora = get_lora_config()
             
         if(lora is not None):
             lora.relay_check_repeat()
         
         picoLogger.commit_log()
         picoSerial.ReadInput()
-        #picoSerial.Write("This is a Test")
-        #utime.sleep(3)
         
 
     except Exception as e:
